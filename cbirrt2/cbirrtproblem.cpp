@@ -32,6 +32,8 @@
 #include "stdafx.h"
 
 std::vector<GraphHandlePtr> graphptrs;
+GraphHandlePtr supportplotptr;
+GraphHandlePtr cglineptr;
 
 CBirrtProblem::CBirrtProblem(EnvironmentBasePtr penv) : ProblemInstance(penv)
 {
@@ -181,6 +183,7 @@ bool CBirrtProblem::DoGeneralIK(ostream& sout, istream& sinput)
     bool bExecute = false;
     bool bBalance = false;
     bool bGetTime = false;
+    bool bReturnSolved = false;
     bool bNoRot = false;
     bool bReturnClosest = false;
     std::vector<string> supportlinks;
@@ -276,11 +279,14 @@ bool CBirrtProblem::DoGeneralIK(ostream& sout, istream& sinput)
             sinput >> polytrans.y;
             sinput >> polytrans.z;
         }
+        else if(stricmp(cmd.c_str(), "returnsolved") == 0 ){
+            bReturnSolved = true;
+        }
         else break;
 
 
         if( !sinput ) {
-            RAVELOG_DEBUG("failed\n");
+            RAVELOG_DEBUG("Failed due to empty input string\n");
             return false;
         }
     }
@@ -334,27 +340,23 @@ bool CBirrtProblem::DoGeneralIK(ostream& sout, istream& sinput)
     boost::shared_ptr<std::vector<dReal> > pqResult(new std::vector<dReal> );
     //PrintMatrix(&ikparams[0], 1, ikparams.size(), "ikparams");
 
+    char solvedflag = 'F';
+    int timetaken = timeGetTime() - starttime;
     if(_pIkSolver->Solve(IkParameterization(), q0, ikparams, false, pqResult) )
     {
-
+        solvedflag='T';
         qResult = *pqResult.get();
-        int timetaken = timeGetTime() - starttime;
         for(int i = 0; i < qResult.size(); i++)
         {
             sout << qResult[i] << " ";
 
         }
-        if(bGetTime)
-            sout << timetaken << " ";
-
         RAVELOG_INFO("Solution Found! (%d ms)\n",timetaken);
         if(bExecute)
             robot->SetActiveDOFValues(qResult);
-        return true;
     }
     else
     {
-        int timetaken = timeGetTime() - starttime;
         if(bReturnClosest)
         {
             qResult = *pqResult.get();
@@ -364,11 +366,16 @@ bool CBirrtProblem::DoGeneralIK(ostream& sout, istream& sinput)
             }
         }
 
-        if(bGetTime)
-            sout << timetaken << " ";
         RAVELOG_INFO("No IK Solution Found (%d ms)\n",timetaken);
-        return true;
     }
+
+    if(bGetTime){
+        sout << timetaken << " ";
+    }
+
+    if(bReturnSolved)
+        sout << solvedflag  << " ";
+    return true;
 }
 
 
@@ -392,6 +399,7 @@ bool CBirrtProblem::CheckSupport(ostream& sout, istream& sinput)
     bool bdraw = false;
     Vector polyscale(1.0,1.0,1.0);
     Vector polytrans(0,0,0);
+    bool useExactPolygon = false;
     while(!sinput.eof()) {
         sinput >> cmd;
         if( !sinput )
@@ -428,16 +436,27 @@ bool CBirrtProblem::CheckSupport(ostream& sout, istream& sinput)
         else if(stricmp(cmd.c_str(), "draw") == 0 ){
             bdraw = true;
         }
-        else break;
-
-
-        if( !sinput ) {
-            RAVELOG_DEBUG("failed\n");
-            return false;
+        else if(stricmp(cmd.c_str(), "exact") == 0 ){
+            //Use the slower vertex-based method to find the exact support polygon. 
+            sinput >> useExactPolygon;
+        }
+        else{
+            RAVELOG_ERROR("%s is an invalid command!\n",cmd.c_str());
+            break;
         }
     }
-    
-    GetSupportPolygon(supportlinks,polyx,polyy,polyscale,polytrans);
+   
+    if (useExactPolygon) 
+    {
+        RAVELOG_DEBUG("Extracting all vertices...\n");
+        GetExactSupportPolygon(supportlinks,polyx,polyy,polyscale,polytrans);
+    }
+    else 
+    {
+        RAVELOG_DEBUG("Extracting AABB vertices... \n");
+        GetSupportPolygon(supportlinks,polyx,polyy,polyscale,polytrans);
+    }
+
     int numPointsOut = polyx.size();
 
     Vector center;  
@@ -453,10 +472,7 @@ bool CBirrtProblem::CheckSupport(ostream& sout, istream& sinput)
 
     FORIT(itlink, vlinks) {
         //RAVELOG_INFO("comoffset: %f %f %f\n", (*itlink)->GetCOMOffset().x,(*itlink)->GetCOMOffset().y,(*itlink)->GetCOMOffset().z);
-        if(bdraw)
-        {
-            GetEnv()->plot3(&(DoubleVectorToFloatVector((*itlink)->GetTransform() * (*itlink)->GetCOMOffset())[0]), 1, 0, (*itlink)->GetMass()/50, Vector(0,0,1),1 );
-        }
+        //GetEnv()->plot3(&(DoubleVectorToFloatVector((*itlink)->GetTransform() * (*itlink)->GetCOMOffset())[0]), 1, 0, (*itlink)->GetMass()/50, Vector(0,0,1),1 );
         center += ((*itlink)->GetTransform() * (*itlink)->GetCOMOffset() * (*itlink)->GetMass());
         fTotalMass += (*itlink)->GetMass();
     }
@@ -489,25 +505,32 @@ bool CBirrtProblem::CheckSupport(ostream& sout, istream& sinput)
     for(int i =0; i < 2; i++)
         fcgline.push_back(RaveVector<float>(cgline[i].x,cgline[i].y,cgline[i].z));
 
+
+    cglineptr.reset();
     if(c)    
     {
-        //GetEnv()->plot3(center, 1, 0, 0.03, Vector(0,1,0),1 );
-        if(bdraw)
-        {
-            GetEnv()->drawlinestrip(&(fcgline[0].x),2,sizeof(RaveVector<float>(0, 1, 0, 0)),5, RaveVector<float>(0, 1, 0, 0));
-        }
+        
+        cglineptr=GetEnv()->drawlinestrip(&(fcgline[0].x),2,sizeof(RaveVector<float>(0, 1, 0, 0)),5, RaveVector<float>(0, 1, 0, 1));
         RAVELOG_INFO("Supported\n");
-        sout << "1";
+        sout << 1 << " ";
     }
     else
     {
-        if(bdraw)
-        {
-            GetEnv()->drawlinestrip(&(fcgline[0].x),2,sizeof(RaveVector<float>(0, 1, 0, 0)),5, RaveVector<float>(1, 0, 0, 0));
-        }
-        //GetEnv()->plot3(center, 1, 0, 0.03, Vector(1,0,0),1 );
+        cglineptr=GetEnv()->drawlinestrip(&(fcgline[0].x),2,sizeof(RaveVector<float>(0, 1, 0, 0)),5, RaveVector<float>(1, 0, 0, 1));
         RAVELOG_INFO("Not Supported\n");
-        sout << "0";
+        sout << 0 << " ";
+    }
+    
+    // Export CoM data and support polygon as a string for use in MATLAB
+    sout << fTotalMass << " " << center.x << " " << center.y << " " << center.z << " ";
+    
+    for (int k=0;k<polyx.size();k++)
+    {
+        sout << polyx[k] << " ";
+    }
+    for (int k=0;k<polyy.size();k++)
+    {
+        sout << polyy[k] << " ";
     }
 
     return true;
@@ -601,7 +624,7 @@ void CBirrtProblem::WriteTraj(TrajectoryBasePtr ptraj, string filename)
 
 
     ofstream outfile(filename.c_str(),ios::out);
-    outfile.precision(16); 
+    outfile.precision(16);
     //pfulltraj->Write(outfile, Trajectory::TO_IncludeTimestamps|Trajectory::TO_IncludeBaseTransformation);
     ptraj->serialize(outfile);
     outfile.close();
@@ -676,6 +699,7 @@ int CBirrtProblem::RunCBirrt(ostream& sout, istream& sinput)
     bool bSmoothTrajOnly = false;
     int nvert = 0;
     int numsupportlinks = 0;
+    bool exactsupport = false;
     std::vector<string> supportlinks;
     KinBodyPtr pheld;
     string tempstring;
@@ -780,6 +804,9 @@ int CBirrtProblem::RunCBirrt(ostream& sout, istream& sinput)
                 supportlinks.push_back(tempstring);
             }
         }
+        else if(stricmp(cmd.c_str(), "exactsupport") == 0 ){
+            sinput >> exactsupport;
+        }
         else if(stricmp(cmd.c_str(), "polyscale") == 0 ){
             sinput >> polyscale.x;
             sinput >> polyscale.y;
@@ -826,16 +853,19 @@ int CBirrtProblem::RunCBirrt(ostream& sout, istream& sinput)
                sinput >> smoothtrajfilename;
                RAVELOG_INFO("smoothing only!\n");
         }
-        else break;
-        if( !sinput ) {
-            RAVELOG_DEBUG("failed\n");
-            sout << 0;
-            return -1;
+        else{
+            RAVELOG_ERROR("%s is an invalid command!\n",cmd.c_str());
+            break;
         }
     }
 
-    if(supportlinks.size() != 0)
-        GetSupportPolygon(supportlinks,params->vsupportpolyx,params->vsupportpolyy,polyscale,polytrans);
+
+    if(supportlinks.size() != 0){
+        if (exactsupport)
+            GetExactSupportPolygon(supportlinks,params->vsupportpolyx,params->vsupportpolyy,polyscale,polytrans);
+        else
+            GetSupportPolygon(supportlinks,params->vsupportpolyx,params->vsupportpolyy,polyscale,polytrans);
+    }
 
 
     if(starts.size() == 0 && !params->bsamplingstart)
@@ -857,6 +887,12 @@ int CBirrtProblem::RunCBirrt(ostream& sout, istream& sinput)
     for(int i = 0; i < goals.size(); i++)
         params->vgoalconfig.push_back(goals[i]);
 
+    stringstream s;
+    RAVELOG_INFO("vinitialconfig:\n");
+    for(int j = 0 ; j < robot->GetActiveDOF(); j++)
+        s<< params->vinitialconfig[j] << " ";
+    s << endl;        
+    RAVELOG_INFO(s.str().c_str());
 
     PlannerBasePtr _pTCplanner; 
 
@@ -941,6 +977,7 @@ int CBirrtProblem::RunCBirrt(ostream& sout, istream& sinput)
     }
     else
     {
+        RAVELOG_INFO("Planning in same thread\n");
         _plannerState = PS_Planning;
         if(!bSmoothTrajOnly)
             bSuccess = _pTCplanner->PlanPath(ptraj);
@@ -1203,47 +1240,47 @@ int CBirrtProblem::convexHull2D(coordT* pointsIn, int numPointsIn, coordT** poin
     FILE* junk = fopen("qhullout.txt","w");
 
     exitcode= qh_new_qhull (2, numPointsIn, pointsIn, false,
-                                      flags, junk, junk);
+            flags, junk, junk);
     fclose(junk);
     *numPointsOut = qh num_vertices;
     *pointsOut = (coordT *)malloc(sizeof(coordT)*(*numPointsOut)*2);
 
     FORALLfacets {
-      facet->seen = 0;
+        facet->seen = 0;
     }
 
     FORALLvertices {
-      vertex->seen = 0;
+        vertex->seen = 0;
     }
 
     facet=qh facet_list;
     j=0;
 
     while(1) {
-    if (facet==NULL) {
-        // empty hull
-        break;
-    }
-            vertexA = (vertexT*)facet->vertices->e[0].p;
-            vertexB = (vertexT*)facet->vertices->e[1].p;
-            if (vertexA->seen==0) {
-                    vertexA->seen = 1;
-                    (*pointsOut)[j++] = vertexA->point[0];
-                    (*pointsOut)[j++] = vertexA->point[1];
-            }
-            if (vertexB->seen==0) {
-                    vertexB->seen = 1;
-                    (*pointsOut)[j++] = vertexB->point[0];
-                    (*pointsOut)[j++] = vertexB->point[1];
-            }
+        if (facet==NULL) {
+            // empty hull
+            break;
+        }
+        vertexA = (vertexT*)facet->vertices->e[0].p;
+        vertexB = (vertexT*)facet->vertices->e[1].p;
+        if (vertexA->seen==0) {
+            vertexA->seen = 1;
+            (*pointsOut)[j++] = vertexA->point[0];
+            (*pointsOut)[j++] = vertexA->point[1];
+        }
+        if (vertexB->seen==0) {
+            vertexB->seen = 1;
+            (*pointsOut)[j++] = vertexB->point[0];
+            (*pointsOut)[j++] = vertexB->point[1];
+        }
 
 
-            //qh_printfacet(stderr, facet);
-            facet->seen = 1;
-            newFacet = (facetT*)facet->neighbors->e[0].p;
-            if (newFacet->seen==1) newFacet = (facetT*)facet->neighbors->e[1].p;
-            if (newFacet->seen==1) { break; }
-            facet = newFacet;
+        //qh_printfacet(stderr, facet);
+        facet->seen = 1;
+        newFacet = (facetT*)facet->neighbors->e[0].p;
+        if (newFacet->seen==1) newFacet = (facetT*)facet->neighbors->e[1].p;
+        if (newFacet->seen==1) { break; }
+        facet = newFacet;
     }
 
     qh_freeqhull(!qh_ALL);
@@ -1270,18 +1307,18 @@ void CBirrtProblem::compute_convex_hull(void)
 
     /* initialize dim, numpoints, points[], ismalloc here */
     exitcode= qh_new_qhull (dim, numpoints, points, ismalloc,
-                                                    flags, outfile, errfile);
+            flags, outfile, errfile);
     if (!exitcode) { /* if no error */
-            /* 'qh facet_list' contains the convex hull */
-            FORALLfacets {
-                    /* ... your code ... */
-            }
+        /* 'qh facet_list' contains the convex hull */
+        FORALLfacets {
+            /* ... your code ... */
+        }
     }
     qh_freeqhull(!qh_ALL);
     qh_memfreeshort (&curlong, &totlong);
     if (curlong || totlong)
-            fprintf (errfile, "qhull internal warning (main): did not free %d bytes of long memory (%d pieces)\n",
-                         totlong, curlong);
+        fprintf (errfile, "qhull internal warning (main): did not free %d bytes of long memory (%d pieces)\n",
+                totlong, curlong);
 
     RAVELOG_INFO("qhull done\n");
 }
@@ -1302,33 +1339,30 @@ void CBirrtProblem::GetSupportPolygon(std::vector<string>& supportlinks, std::ve
         {
             if(strcmp(supportlinks[i].c_str(), vlinks[j]->GetName().c_str()) == 0 )
             {
-                RAVELOG_DEBUG("Found match!\n");
+                RAVELOG_DEBUG("Found match for %s!\n",vlinks[j]->GetName().c_str());
                 _listGeomProperties = vlinks[j]->GetGeometries();
 
-                //compute AABBs for the link at identity
                 for(int k = 0; k < _listGeomProperties.size(); k++)
                 {
-                //if( _listGeomProperties.size() == 1){
                     Transform _t = _listGeomProperties[k]->GetTransform().inverse();
-                    //bounds = _listGeomProperties[k]->ComputeAABB(_t);
                     bounds = _listGeomProperties[k]->ComputeAABB(_listGeomProperties[k]->GetTransform());
                     Transform offset = vlinks[j]->GetTransform()*_t;
+
                     points.push_back(offset*Vector(bounds.pos.x + bounds.extents.x,bounds.pos.y + bounds.extents.y,bounds.pos.z - bounds.extents.z));
                     points.push_back(offset*Vector(bounds.pos.x - bounds.extents.x,bounds.pos.y + bounds.extents.y,bounds.pos.z - bounds.extents.z));
                     points.push_back(offset*Vector(bounds.pos.x - bounds.extents.x,bounds.pos.y - bounds.extents.y,bounds.pos.z - bounds.extents.z));
                     points.push_back(offset*Vector(bounds.pos.x + bounds.extents.x,bounds.pos.y - bounds.extents.y,bounds.pos.z - bounds.extents.z));
-                    
+
                     points.push_back(offset*Vector(bounds.pos.x + bounds.extents.x,bounds.pos.y + bounds.extents.y,bounds.pos.z + bounds.extents.z));
                     points.push_back(offset*Vector(bounds.pos.x - bounds.extents.x,bounds.pos.y + bounds.extents.y,bounds.pos.z + bounds.extents.z));
                     points.push_back(offset*Vector(bounds.pos.x - bounds.extents.x,bounds.pos.y - bounds.extents.y,bounds.pos.z + bounds.extents.z));
                     points.push_back(offset*Vector(bounds.pos.x + bounds.extents.x,bounds.pos.y - bounds.extents.y,bounds.pos.z + bounds.extents.z));
+
                 }
-                break;
             }
-
-
         }
     }
+
     RAVELOG_INFO("Num support points in to qhull: %d\n",points.size());
     std::vector<coordT> pointsin(points.size()*2);
     std::vector<RaveVector<float> > plotvecs(points.size());
@@ -1347,7 +1381,7 @@ void CBirrtProblem::GetSupportPolygon(std::vector<string>& supportlinks, std::ve
 
     convexHull2D(&pointsin[0], points.size(), &pointsOut, &numPointsOut);
     RAVELOG_INFO("Num support points out of qhull:: %d\n",numPointsOut);
-    
+
     std::vector<RaveVector<float> > tempvecs(numPointsOut +1);
     polyx.resize(numPointsOut);
     polyy.resize(numPointsOut);
@@ -1371,17 +1405,108 @@ void CBirrtProblem::GetSupportPolygon(std::vector<string>& supportlinks, std::ve
         tempvecs[i] = RaveVector<float>(polyx[i],polyy[i],0);
     }
 
-    
 
     //close the polygon
     tempvecs[tempvecs.size()-1] = RaveVector<float>(polyx[0],polyy[0],0);
     GraphHandlePtr graphptr = GetEnv()->drawlinestrip(&tempvecs[0].x,tempvecs.size(),sizeof(tempvecs[0]),5, RaveVector<float>(0, 1, 1, 1));
-    graphptrs.push_back(graphptr);
+    //graphptrs.push_back(graphptr);
+    // Changed this to use a single global pointer to the last plotted polygon, to prevent keeping a plotted "trail" of polygons
+    // TODO: Make this controllable by a command through the interface
+    supportplotptr.reset();
+    supportplotptr=graphptr;
 
 
     free(pointsOut);
 }
 
+void CBirrtProblem::GetExactSupportPolygon(std::vector<string>& supportlinks, std::vector<dReal>& polyx, std::vector<dReal>& polyy, Vector polyscale, Vector polytrans)
+{
+    int numsupportlinks = supportlinks.size();
+
+    std::vector<boost::shared_ptr<KinBody::Link::Geometry> >_listGeomProperties;
+    std::vector<Vector> points;
+    //get points on trimeshes of support links
+    vector<KinBody::LinkPtr> vlinks = robot->GetLinks();
+
+    for(int i = 0 ; i < numsupportlinks; i++)
+    {   
+        for(int j =0; j < vlinks.size(); j++)
+        {
+            if(strcmp(supportlinks[i].c_str(), vlinks[j]->GetName().c_str()) == 0 )
+            {
+                RAVELOG_DEBUG("Found match for %s\n",supportlinks[i].c_str());
+                _listGeomProperties = vlinks[j]->GetGeometries();
+
+                Transform _t = _listGeomProperties.front()->GetTransform().inverse();
+                for(int k = 0; k < _listGeomProperties.size(); k++)
+                {
+                    Transform _t = _listGeomProperties[k]->GetTransform();
+                    Transform offset = vlinks[j]->GetTransform()*_t;
+
+                    FOREACH( it , _listGeomProperties[k]->GetCollisionMesh().vertices)
+                    {
+                        points.push_back(offset * (*it));
+                    }
+                }
+                //Stop searching for a given support link once found
+                break;
+            }
+        }
+    }
+
+    RAVELOG_INFO("Num support points in to qhull: %d\n",points.size());
+    std::vector<coordT> pointsin(points.size()*2);
+    std::vector<RaveVector<float> > plotvecs(points.size());
+    for(int i = 0; i < points.size();i++)
+    {
+        pointsin[i*2 + 0] = points[i].x;
+        pointsin[i*2 + 1] = points[i].y;
+        plotvecs[i] = RaveVector<float>(points[i].x,points[i].y,points[i].z);
+    }
+
+    coordT* pointsOut = NULL;
+
+    int numPointsOut = 0;
+
+    convexHull2D(&pointsin[0], points.size(), &pointsOut, &numPointsOut);
+    RAVELOG_INFO("Num support points out of qhull:: %d\n",numPointsOut);
+
+    std::vector<RaveVector<float> > tempvecs(numPointsOut +1);
+    polyx.resize(numPointsOut);
+    polyy.resize(numPointsOut);
+    dReal centerx = 0;
+    dReal centery = 0;
+    for(int i =0; i < numPointsOut; i++)
+    {
+        polyx[i] = pointsOut[(i)*2 + 0];       
+        polyy[i] = pointsOut[(i)*2 + 1];
+        centerx += polyx[i];
+        centery += polyy[i];
+    }
+    centerx = centerx/numPointsOut;
+    centery = centery/numPointsOut;
+
+
+    for(int i =0; i < numPointsOut; i++)
+    {
+        polyx[i] = polyscale.x*(polyx[i] - centerx) + centerx + polytrans.x;       
+        polyy[i] = polyscale.y*(polyy[i] - centery) + centery + polytrans.y;
+        tempvecs[i] = RaveVector<float>(polyx[i],polyy[i],0);
+    }
+
+
+    //close the polygon
+    tempvecs[tempvecs.size()-1] = RaveVector<float>(polyx[0],polyy[0],0);
+    GraphHandlePtr graphptr = GetEnv()->drawlinestrip(&tempvecs[0].x,tempvecs.size(),sizeof(tempvecs[0]),5, RaveVector<float>(0, 1, 1, 1));
+    //graphptrs.push_back(graphptr);
+    // Changed this to use a single global pointer to the last plotted polygon, to prevent keeping a plotted "trail" of polygons
+    // TODO: Make this controllable by a command through the interface
+    supportplotptr.reset();
+    supportplotptr=graphptr;
+
+
+    free(pointsOut);
+}
 
 bool CBirrtProblem::Traj(ostream& sout, istream& sinput)
 {
@@ -1396,7 +1521,7 @@ bool CBirrtProblem::Traj(ostream& sout, istream& sinput)
     //ptraj->Init(robot->GetConfigurationSpecification());
 
     ifstream infile(filename.c_str(),ios::in);
-    infile.precision(16); 
+    infile.precision(16);
     ptraj->deserialize(infile);
 
     RAVELOG_VERBOSE("executing traj\n");
