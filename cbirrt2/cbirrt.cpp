@@ -127,8 +127,6 @@ bool CBirrtPlanner::InitPlan(RobotBasePtr  pbase, PlannerParametersConstPtr ppar
     {
         _parameters.reset(new CBirrtParameters());
         _parameters->copy(pparams);
-        //_parameters->copy(pparams);
-       
     }
     else
     {
@@ -505,7 +503,7 @@ bool CBirrtPlanner::InitPlan(RobotBasePtr  pbase, PlannerParametersConstPtr ppar
         }
     }
 
-    RAVELOG_DEBUG("Initializaing Start State\n");
+    RAVELOG_DEBUG("Initializing Start State\n");
 
     //don't touch ikguess if one given, if not use start configuration, if no start use random (new random each time)
     if(_parameters->vikguess.size() == 0 && _pForwardTree->GetSize() > 0)
@@ -527,7 +525,6 @@ OpenRAVE::PlannerStatus CBirrtPlanner::PlanPath(TrajectoryBasePtr ptraj)
       RAVELOG_DEBUG("CBirrtPlanner::PlanPath - Error, planner not initialized\n");
 
     RAVELOG_DEBUG("Starting PlanPath\n");
-
 
     bool bContinuePlan = true;
 
@@ -976,7 +973,6 @@ bool CBirrtPlanner::_CheckCollision(std::vector<dReal>& pConfig)
         //RAVELOG_DEBUG("CBirrt collision: %S:%S with %S:%S\n", preport->plink1->GetParent()->GetName(), preport->plink1->GetName(), preport->plink2->GetParent()->GetName(), preport->plink2->GetName());
     }
 
-    //GetEnv()->CheckSelfCollision(KinBodyConstPtr(_pRobot), preport) // doesn't work for grabbed bodies
     if(_pRobot->CheckSelfCollision(preport))
     {
         RAVELOG_DEBUG("CBirrt self-collision: %s:%s with %s:%s\n", preport->plink1->GetParent()->GetName().c_str(), preport->plink1->GetName().c_str(), preport->plink2->GetParent()->GetName().c_str(), preport->plink2->GetName().c_str());
@@ -1451,13 +1447,13 @@ bool CBirrtPlanner::MakeNext::MakeNodes(int TreeSize, RrtNode* StartNode, std::v
     }
     
     normDiff = sqrt(normDiff);
-    //printf("Diff: \n");
+    //RAVELOG_DEBUG("Diff: \n");
     for (i = 0; i < numDOF; i++)
     {
         diff[i] = diff[i]/normDiff;
-        //printf("%f ", diff[i]);
+        //RAVELOG_DEBUG("%f ", diff[i]);
     }
-    //printf("\n");
+    //RAVELOG_DEBUG("\n");
 
     _planner->vTSRChainValues_temp = StartNode->GetTSRChainValues();
 
@@ -1486,14 +1482,14 @@ bool CBirrtPlanner::MakeNext::MakeNodes(int TreeSize, RrtNode* StartNode, std::v
         oldnormDist = normDist;
         normDist =0;
 
-        //printf("Dist: \n");
+        //RAVELOG_DEBUG("Dist: \n");
         for (i = 0; i < numDOF; i++)
         {
             dist[i] = targetConfig->at(i) - oldConfig[i]; 
-            //printf("%f ", dist[i]);
+            //RAVELOG_DEBUG("%f ", dist[i]);
             normDist += dist[i]*dist[i]; 
         }
-        //printf("\n");
+        //RAVELOG_DEBUG("\n");
         normDist = sqrt(normDist);
 
         //get new config

@@ -130,6 +130,7 @@ public:
         CBirrtPlanner * _planner;
         std::vector<dReal> _lowerLimit;
         std::vector<dReal> _upperLimit;
+
         //variables for tree extension
         dReal* startConfig;
         bool bExtendConnect;
